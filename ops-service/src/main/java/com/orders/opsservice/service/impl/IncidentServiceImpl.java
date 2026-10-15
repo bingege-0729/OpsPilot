@@ -1,5 +1,6 @@
 package com.orders.opsservice.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.orders.opsservice.dto.IncidentCreateDTO;
 import com.orders.opsservice.dto.IncidentUpdateDTO;
 import com.orders.opsservice.entity.Incident;
@@ -53,11 +54,15 @@ public class IncidentServiceImpl implements IncidentService {
     }
 
     /**
-     * 查询所有故障事件
+     * 查询所有故障事件（按 id 倒序，最新的在最前）
+     * <p>
+     * 运维查故障永远只看最新几条，selectList(null) 不带 ORDER BY
+     * 会按主键升序返回，最旧的排在前面——顺序对运维工具是反的。
      */
     @Override
     public List<Incident> list() {
-        return incidentMapper.selectList(null);
+        return incidentMapper.selectList(new LambdaQueryWrapper<Incident>()
+                .orderByDesc(Incident::getId));
     }
 
     /**

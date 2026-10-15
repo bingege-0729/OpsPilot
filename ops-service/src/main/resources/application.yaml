@@ -39,12 +39,15 @@ logging:
     console: "%d{HH:mm:ss.SSS} %5level [%thread] [traceId=%X{traceId}] %logger{20} - %msg%n"
 
 # 熔断器配置：5 次调用的滑动窗口，失败率 ≥60% 即开门；
-# 开门 15 秒后放 2 次探测请求（半开），成功则关门恢复
+# 开门 15 秒后放 2 次探测请求（半开），成功则关门恢复。
+# 注意 minimum-number-of-calls 必须显式调小——它的默认值是 100，
+# 不配的话窗口不满 100 次调用，熔断器根本不算失败率，永远不会开门。
 resilience4j:
   circuitbreaker:
     instances:
       demoService:
         sliding-window-size: 5
+        minimum-number-of-calls: 3
         failure-rate-threshold: 60
         wait-duration-in-open-state: 15s
         permitted-number-of-calls-in-half-open-state: 2
