@@ -23,7 +23,10 @@ public class Incident {
     private String eventType;           // 故障类型
     private String severity;            // 故障严重程度
     private String description;         // 故障描述
-    private String status;              // 故障状态
+    private String status;              // 故障状态：OPEN（故障中）/ CLOSED（已恢复）
+    private Integer failCount;          // 连续失败次数（持续失败每次 +1）
+    private LocalDateTime firstFailedAt; // 首次失败时间（仅创建时写入，不随后续失败刷新）
+    private LocalDateTime resolvedAt;   // 恢复关闭时间
     private LocalDateTime createdAt;    // 创建时间
     private LocalDateTime updatedAt;    // 更新时间
 }

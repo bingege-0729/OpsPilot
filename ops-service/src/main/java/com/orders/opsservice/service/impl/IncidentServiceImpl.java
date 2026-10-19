@@ -1,6 +1,7 @@
 package com.orders.opsservice.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.orders.opsservice.dto.IncidentCreateDTO;
 import com.orders.opsservice.dto.IncidentUpdateDTO;
 import com.orders.opsservice.entity.Incident;
@@ -10,6 +11,7 @@ import com.orders.opsservice.service.IncidentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,13 +19,16 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class IncidentServiceImpl implements IncidentService {
 
+    private static final String STATUS_OPEN = "OPEN";
+    private static final String STATUS_CLOSED = "CLOSED";
+
     private final IncidentMapper incidentMapper;
 
     /**
-     * 创建故障事件
+     * 创建故障事件（外部/手动入口）。
      * <p>
-     * eventNo 服务端生成；status 固定 DETECTED；
-     * createdAt/updatedAt 不手动 set（MP 对 null 字段不拼 INSERT 列，数据库默认值生效）。
+     * eventNo 服务端生成；status 固定 OPEN（故障进行中）；
+     * createdAt/updatedAt/firstFailedAt 不手动 set（MP 对 null 字段不拼 INSERT 列，数据库默认值生效）。
      */
     @Override
     public Incident create(IncidentCreateDTO incidentCreateDTO) {
@@ -35,7 +40,7 @@ public class IncidentServiceImpl implements IncidentService {
                 .severity(incidentCreateDTO.getSeverity() == null
                         ? "MEDIUM" : incidentCreateDTO.getSeverity())
                 .description(incidentCreateDTO.getDescription())
-                .status("DETECTED")
+                .status(STATUS_OPEN)
                 .build();
 
         int rows = incidentMapper.insert(incident);
@@ -95,5 +100,62 @@ public class IncidentServiceImpl implements IncidentService {
 
         incidentMapper.updateById(incident);
         return incidentMapper.selectById(id);
+    }
+
+    /**
+     * 查找某服务某类型当前未关闭（OPEN）的故障事件，状态机聚合更新用。
+     * <p>
+     * 命中 (service_name, event_type, status) -> idx_service_status 索引，避免全表扫描。
+     */
+    @Override
+    public Incident findActive(String serviceName, String eventType) {
+        return incidentMapper.selectOne(new LambdaQueryWrapper<Incident>()
+                .eq(Incident::getServiceName, serviceName)
+                .eq(Incident::getEventType, eventType)
+                .eq(Incident::getStatus, STATUS_OPEN)
+                .orderByDesc(Incident::getId)
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 关闭某服务所有未关闭事件（恢复检测成功时调用），写入 resolved_at。
+     *
+     * @return 被关闭的事件条数
+     */
+    @Override
+    public int closeOpenByService(String serviceName, LocalDateTime resolvedAt) {
+        return incidentMapper.update(null, new UpdateWrapper<Incident>()
+                .eq("service_name", serviceName)
+                .eq("status", STATUS_OPEN)
+                .set("status", STATUS_CLOSED)
+                .set("resolved_at", resolvedAt));
+    }
+
+    /**
+     * 故障状态机核心：记录一次失败。
+     * <p>
+     * 已存在 (serviceName, eventType, status=OPEN) 事件 -> fail_count + 1（聚合更新，不新增）；
+     * 否则新建事件（status=OPEN, failCount=1, firstFailedAt=now）。
+     */
+    @Override
+    public void recordFailure(String serviceName, String eventType,
+                              String severity, String description) {
+        Incident active = findActive(serviceName, eventType);
+        if (active == null) {
+            incidentMapper.insert(Incident.builder()
+                    .eventNo("INCIDENT_" + UUID.randomUUID())
+                    .serviceName(serviceName)
+                    .eventType(eventType)
+                    .severity(severity)
+                    .description(description)
+                    .status(STATUS_OPEN)
+                    .failCount(1)
+                    .firstFailedAt(LocalDateTime.now())
+                    .build());
+        } else {
+            incidentMapper.update(null, new UpdateWrapper<Incident>()
+                    .eq("id", active.getId())
+                    .setSql("fail_count = fail_count + 1"));
+        }
     }
 }
